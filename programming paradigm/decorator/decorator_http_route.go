@@ -1,0 +1,91 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"strings"
+)
+
+// 中间件1：设置响应头
+func WithServerHeader(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Println("--->WithServerHeader()")
+		w.Header().Set("Server", "HelloServer v0.0.1")
+		h(w, r)
+	}
+}
+
+// 中间件2：写入 Cookie
+func WithAuthCookie(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Println("--->WithAuthCookie()")
+		cookie := &http.Cookie{
+			Name:  "Auth",
+			Value: "Pass",
+			Path:  "/",
+		}
+		http.SetCookie(w, cookie)
+		h(w, r)
+	}
+}
+
+// 中间件3：校验 Cookie
+func WithBasicAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Println("--->WithBasicAuth()")
+		cookie, err := r.Cookie("Auth")
+		if err != nil || cookie.Value != "Pass" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprintf(w, "Forbidden")
+			return
+		}
+		h(w, r)
+	}
+}
+
+// 中间件4：打印调试日志
+func WithDebugLog(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Println("--->WithDebugLog")
+
+		err := r.ParseForm()
+		if err != nil {
+			log.Println("ParseForm error:", err)
+		}
+
+		log.Println("Form:", r.Form)
+		log.Println("path:", r.URL.Path)
+		log.Println("scheme:", r.URL.Scheme)
+
+		for k, v := range r.Form {
+			log.Println("key:", k)
+			log.Println("val:", strings.Join(v, ","))
+		}
+
+		h(w, r)
+	}
+}
+
+// 业务 handler
+func hello(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Received Request %s from %s\n", r.URL.Path, r.RemoteAddr)
+	fmt.Fprintf(w, "Hello, World! %s\n", r.URL.Path)
+}
+
+func main() {
+	http.HandleFunc("/v1/hello",
+		WithServerHeader(WithAuthCookie(hello)))
+
+	http.HandleFunc("/v2/hello",
+		WithServerHeader(WithBasicAuth(hello)))
+
+	http.HandleFunc("/v3/hello",
+		WithServerHeader(WithBasicAuth(WithDebugLog(hello))))
+
+	log.Println("Server started at :8080")
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		log.Fatal("ListenAndServe:", err)
+	}
+}
